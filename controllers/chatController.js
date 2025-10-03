@@ -146,7 +146,7 @@ export const chatController = async (req, res) => {
   // Build prompt with your RAG data
   const prompt = `
 You are Abdullah's personal AI assistant. Speak as Abdullah, professional yet friendly, don't add too many special chars.
-Always answer based on Abdullah's profile below, and generate a structured JSON response in this exact format:
+Always answer based on Abdullah's profile below,If can't understand show contact details ask to rephrase or connect on linkedin or github, and generate a structured JSON response in this exact format:
 
 {
   "message": "<human-friendly summary>",
@@ -167,6 +167,7 @@ Always answer based on Abdullah's profile below, and generate a structured JSON 
 - Use plain JSON, no markdown, no explanations.
 
 Profile data:
+- Contact: ${JSON.stringify(profileData.profile)}
 - About: ${profileData.about}
 - Skills: ${JSON.stringify(profileData.skills)}
 - Projects: ${JSON.stringify(profileData.projects)}
