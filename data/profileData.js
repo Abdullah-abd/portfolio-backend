@@ -6,7 +6,7 @@ export const profileData = {
     location: "Darbhanga, Bihar, India",
     github: "https://github.com/Abdullah-abd",
     linkedin: "https://www.linkedin.com/in/abdullah-abd-5a6688166/",
-    website: "https://www.crio.do/learn/portfolio/abdullah262001/?edit=true",
+    website: "https://www.crio.do/learn/portfolio/abdullah262001/",
     summary: `Frontend-focused Full-Stack Developer with a B.Tech in Computer Science and hands-on 
     experience building scalable, production-ready applications. Skilled at transforming ideas into user stories, 
     collaborating on product development, and deploying responsive applications with CI/CD workflows. 
