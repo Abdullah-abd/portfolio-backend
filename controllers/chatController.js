@@ -18,13 +18,13 @@ export const chatController = async (req, res) => {
   const prompt = `
 You are Abdullah's personal AI assistant. Speak as Abdullah — professional yet friendly.
 Always answer based on Abdullah's profile below.
-If you can't understand the user's query, politely ask them to rephrase or share contact details (LinkedIn/GitHub).
-You must always respond in **valid JSON only** in the following format:
+You must ALWAYS respond in valid JSON only.
 
+Format:
 {
-  "message": "<human-friendly summary>",
+  "message": "<summary>",
   "data": {
-    "profile": { "name": "", "email": "", "phone": "", "location": "", "github": "", "linkedin": "", "website": "", "summary": "" },
+    "profile": {},
     "projects": [],
     "education": [],
     "experience": [],
@@ -35,9 +35,6 @@ You must always respond in **valid JSON only** in the following format:
     "general": ""
   }
 }
-
-Only fill fields relevant to the user’s question (e.g. if about projects, fill 'projects' + 'message', others empty).
-Do NOT use markdown or backticks in the output. Respond only in plain JSON.
 
 Profile data:
 - Contact: ${JSON.stringify(profileData.profile)}
@@ -54,32 +51,20 @@ Profile data:
 User question: ${message}
 `;
 
-  // --- Helper: Clean & Parse JSON Safely ---
+  // --- Safe JSON Parser ---
   const safeParseJSON = (text) => {
     if (!text) throw new Error("Empty AI response");
 
     let cleaned = text.trim();
 
-    // Remove <think>...</think> tags (used by some models)
-    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/g, "");
+    cleaned = cleaned.replace(/```json|```/g, "").trim();
 
-    // Remove ```json and ``` fences if present
-    if (cleaned.startsWith("```")) {
-      cleaned = cleaned.replace(/^```json\s*/i, "").replace(/^```/, "");
-      cleaned = cleaned.replace(/```$/, "").trim();
-    }
-
-    // Attempt to parse JSON
-    try {
-      return JSON.parse(cleaned);
-    } catch (err) {
-      console.error("⚠️ Failed to parse AI JSON. Raw text:\n", cleaned);
-      throw new Error("AI did not return valid JSON");
-    }
+    return JSON.parse(cleaned);
   };
 
   try {
-    // --- Primary: GitHub Models API ---
+    // --- GitHub Models API ---
     const ghResponse = await fetch(
       "https://models.github.ai/inference/chat/completions",
       {
@@ -96,101 +81,45 @@ User question: ${message}
           max_tokens: 1024,
           temperature: 0.7,
         }),
-      }
+      },
     );
+
+    // ✅ CRITICAL FIX: Check status first
+    if (!ghResponse.ok) {
+      const text = await ghResponse.text();
+      console.error("GitHub API Error:", text);
+      throw new Error(`GitHub API failed: ${text}`);
+    }
 
     const ghResult = await ghResponse.json();
 
-    if (ghResult.error) {
-      throw new Error(ghResult.error.message || "GitHub returned an error");
+    // ✅ Safe access
+    const reply = ghResult?.choices?.[0]?.message?.content;
+
+    if (!reply) {
+      throw new Error("No content from GitHub model");
     }
 
-    if (ghResult.choices && ghResult.choices.length > 0) {
-      const reply = ghResult.choices[0].message.content;
-      const parsed = safeParseJSON(reply);
+    const parsed = safeParseJSON(reply);
 
-      return res.json({
-        status: "success",
-        question: message,
-        response_type: "chat",
-        message: parsed.message,
-        data: parsed.data,
-        metadata: {
-          provider: "GitHub Models",
-          timestamp: new Date().toISOString(),
-          version: "1.0.0",
-        },
-      });
-    }
-
-    throw new Error("No response from GitHub model, trying fallback...");
+    return res.json({
+      status: "success",
+      question: message,
+      response_type: "chat",
+      message: parsed.message,
+      data: parsed.data,
+      metadata: {
+        provider: "GitHub Models",
+        timestamp: new Date().toISOString(),
+        version: "2.0.0",
+      },
+    });
   } catch (err) {
-    console.warn("⚠️ GitHub failed, trying OpenRouter:", err.message);
+    console.error("❌ GitHub Chat Error:", err.message);
 
-    // --- Fallback: OpenRouter API with 3 free models ---
-    const fallbackModels = [
-      "mistralai/mistral-small-3.1-24b-instruct:free",
-      "alibaba/tongyi-deepresearch-30b-a3b:free",
-      "meituan/longcat-flash-chat:free",
-    ];
-
-    for (const model of fallbackModels) {
-      try {
-        console.log(`🚀 Trying OpenRouter fallback model: ${model}`);
-
-        const orResponse = await fetch(
-          "https://openrouter.ai/api/v1/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model,
-              messages: [{ role: "user", content: prompt }],
-            }),
-          }
-        );
-
-        const orResult = await orResponse.json();
-        console.log(`🔍 [${model}] OpenRouter raw response:`, orResult);
-
-        if (orResult.error) {
-          throw new Error(
-            orResult.error.message || "OpenRouter returned an error"
-          );
-        }
-
-        if (orResult.choices && orResult.choices.length > 0) {
-          const reply = orResult.choices[0].message.content;
-          const parsed = safeParseJSON(reply);
-
-          return res.json({
-            status: "success",
-            question: message,
-            response_type: "chat",
-            message: parsed.message,
-            data: parsed.data,
-            metadata: {
-              provider: `OpenRouter (${model})`,
-              timestamp: new Date().toISOString(),
-              version: "1.0.0",
-            },
-          });
-        }
-
-        throw new Error(`No response from OpenRouter model: ${model}`);
-      } catch (mErr) {
-        console.warn(`⚠️ ${model} failed:`, mErr.message);
-      }
-    }
-
-    // --- If all fallbacks failed ---
-    console.error("❌ All OpenRouter fallback models failed");
     return res.status(500).json({
       status: "error",
-      message: "⚠️ All APIs failed (GitHub + OpenRouter fallbacks)",
+      message: "AI service temporarily unavailable",
       details: err.message,
     });
   }
