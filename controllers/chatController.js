@@ -140,58 +140,60 @@ ${message}
     "openai/gpt-4o-mini",
     "mistralai/Mistral-7B-Instruct-v0.2",
   ];
-  try {
-    const response = await fetch(
-      "https://models.github.ai/inference/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          "Content-Type": "application/json",
+  for (let model of MODELS) {
+    try {
+      const response = await fetch(
+        "https://models.github.ai/inference/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 800,
+            temperature: 0.5,
+          }),
         },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: 800,
-          temperature: 0.5,
-        }),
-      },
-    );
+      );
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Model ${model} failed: ${text}`);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Model ${model} failed: ${text}`);
+      }
+
+      const data = await response.json();
+      const reply = data?.choices?.[0]?.message?.content;
+
+      if (!reply) {
+        throw new Error(`Model ${model} returned empty response`);
+      }
+
+      const parsed = safeParseJSON(reply);
+
+      return res.json({
+        status: "success",
+        question: message,
+        message: parsed.message,
+        data: parsed.data,
+        metadata: {
+          provider: "GitHub Models",
+          timestamp: new Date().toISOString(),
+          version: "3.0.0",
+          queryType,
+        },
+      });
+    } catch (err) {
+      console.error("❌ Chat Error:", err.message);
+
+      return res.status(500).json({
+        status: "error",
+        message: "AI service temporarily unavailable",
+        details: err.message,
+      });
     }
-
-    const data = await response.json();
-    const reply = data?.choices?.[0]?.message?.content;
-
-    if (!reply) {
-      throw new Error(`Model ${model} returned empty response`);
-    }
-
-    const parsed = safeParseJSON(reply);
-
-    return res.json({
-      status: "success",
-      question: message,
-      message: parsed.message,
-      data: parsed.data,
-      metadata: {
-        provider: "GitHub Models",
-        timestamp: new Date().toISOString(),
-        version: "3.0.0",
-        queryType,
-      },
-    });
-  } catch (err) {
-    console.error("❌ Chat Error:", err.message);
-
-    return res.status(500).json({
-      status: "error",
-      message: "AI service temporarily unavailable",
-      details: err.message,
-    });
   }
 };
