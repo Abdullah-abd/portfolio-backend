@@ -1,6 +1,14 @@
 import dotenv from "dotenv";
-import fetch from "node-fetch"; // only if Node < 18
-import { profileData } from "../data/profileData.js";
+import fetch from "node-fetch";
+import {
+  baseContext,
+  educationContext,
+  experienceContext,
+  generalContext,
+  hobbiesContext,
+  projectsContext,
+  skillsContext,
+} from "../data/profileData.js";
 
 dotenv.config();
 
@@ -14,15 +22,82 @@ export const chatController = async (req, res) => {
     });
   }
 
-  // --- Build dynamic prompt ---
-  const prompt = `
-You are Abdullah's personal AI assistant. Speak as Abdullah — professional yet friendly.
-Always answer based on Abdullah's profile below.
-You must ALWAYS respond in valid JSON only.
+  // 1. QUERY CLASSIFIER
+  const classifyQuery = (msg) => {
+    const text = msg.toLowerCase();
 
-Format:
+    if (!text || text.trim().length < 2) return "invalid";
+
+    if (text.includes("project")) return "projects";
+    if (text.includes("skill") || text.includes("tech")) return "skills";
+    if (text.includes("experience") || text.includes("work"))
+      return "experience";
+    if (text.includes("education") || text.includes("study"))
+      return "education";
+    if (text.includes("hobby") || text.includes("interest")) return "hobbies";
+
+    if (["hi", "hello", "hey"].includes(text)) return "greeting";
+
+    return "general";
+  };
+
+  // 2. CONTEXT BUILDER
+  const buildContext = (type) => {
+    let context = baseContext;
+
+    switch (type) {
+      case "projects":
+        context += projectsContext;
+        break;
+      case "skills":
+        context += skillsContext;
+        break;
+      case "experience":
+        context += experienceContext;
+        break;
+      case "education":
+        context += educationContext;
+        break;
+      case "hobbies":
+        context += hobbiesContext;
+        break;
+      case "general":
+        context += generalContext;
+        break;
+      case "greeting":
+        break;
+      case "invalid":
+        return null;
+    }
+
+    return context;
+  };
+
+  const queryType = classifyQuery(message);
+  const context = buildContext(queryType);
+
+  // invalid case
+  if (!context) {
+    return res.json({
+      status: "success",
+      message: "Sorry, I didn’t understand. Please rephrase.",
+      data: {},
+    });
+  }
+
+  // 3. FINAL PROMPT
+  const prompt = `
+You are Abdullah's personal AI assistant. Speak as Abdullah — professional, confident, and friendly.
+
+STRICT RULES:
+- Return ONLY valid JSON
+- No markdown, no extra text
+- Always valid JSON
+- No trailing commas
+
+RESPONSE FORMAT:
 {
-  "message": "<summary>",
+  "message": "short human-like summary",
   "data": {
     "profile": {},
     "projects": [],
@@ -36,22 +111,20 @@ Format:
   }
 }
 
-Profile data:
-- Contact: ${JSON.stringify(profileData.profile)}
-- About: ${profileData.about}
-- Skills: ${JSON.stringify(profileData.skills)}
-- Projects: ${JSON.stringify(profileData.projects)}
-- Experience: ${JSON.stringify(profileData.experience)}
-- Education: ${JSON.stringify(profileData.education)}
-- Certificates: ${JSON.stringify(profileData.certificates)}
-- Testimonials: ${JSON.stringify(profileData.testimonials)}
-- Hobbies: ${JSON.stringify(profileData.hobbies)}
-- General: ${profileData.general}
+INSTRUCTIONS:
+- Answer ONLY what user asked
+- Fill ONLY relevant fields
+- Keep others empty
+- Use first-person tone
 
-User question: ${message}
+CONTEXT:
+${context}
+
+USER QUESTION:
+${message}
 `;
 
-  // --- Safe JSON Parser ---
+  // SAFE PARSER
   const safeParseJSON = (text) => {
     if (!text) throw new Error("Empty AI response");
 
@@ -64,7 +137,6 @@ User question: ${message}
   };
 
   try {
-    // --- GitHub Models API ---
     const ghResponse = await fetch(
       "https://models.github.ai/inference/chat/completions",
       {
@@ -72,50 +144,43 @@ User question: ${message}
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          "X-GitHub-Api-Version": "2022-11-28",
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           model: "deepseek/DeepSeek-V3-0324",
           messages: [{ role: "user", content: prompt }],
-          max_tokens: 1024,
-          temperature: 0.7,
+          max_tokens: 800, //  reduce to avoid truncation
+          temperature: 0.5, //  more stable JSON
         }),
       },
     );
 
-    // ✅ CRITICAL FIX: Check status first
     if (!ghResponse.ok) {
       const text = await ghResponse.text();
-      console.error("GitHub API Error:", text);
-      throw new Error(`GitHub API failed: ${text}`);
+      throw new Error(text);
     }
 
-    const ghResult = await ghResponse.json();
+    const result = await ghResponse.json();
+    const reply = result?.choices?.[0]?.message?.content;
 
-    // ✅ Safe access
-    const reply = ghResult?.choices?.[0]?.message?.content;
-
-    if (!reply) {
-      throw new Error("No content from GitHub model");
-    }
+    if (!reply) throw new Error("No content from model");
 
     const parsed = safeParseJSON(reply);
 
     return res.json({
       status: "success",
       question: message,
-      response_type: "chat",
       message: parsed.message,
       data: parsed.data,
       metadata: {
         provider: "GitHub Models",
         timestamp: new Date().toISOString(),
-        version: "2.0.0",
+        version: "3.0.0",
+        queryType,
       },
     });
   } catch (err) {
-    console.error("❌ GitHub Chat Error:", err.message);
+    console.error("❌ Chat Error:", err.message);
 
     return res.status(500).json({
       status: "error",
