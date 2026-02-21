@@ -12,6 +12,8 @@ import {
 
 dotenv.config();
 
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
 export const chatController = async (req, res) => {
   const { message } = req.body;
 
@@ -22,7 +24,7 @@ export const chatController = async (req, res) => {
     });
   }
 
-  // 1. QUERY CLASSIFIER
+  // 🔹 1. QUERY CLASSIFIER
   const classifyQuery = (msg) => {
     const text = msg.toLowerCase();
 
@@ -41,7 +43,7 @@ export const chatController = async (req, res) => {
     return "general";
   };
 
-  // 2. CONTEXT BUILDER
+  // 🔹 2. CONTEXT BUILDER
   const buildContext = (type) => {
     let context = baseContext;
 
@@ -76,7 +78,6 @@ export const chatController = async (req, res) => {
   const queryType = classifyQuery(message);
   const context = buildContext(queryType);
 
-  // invalid case
   if (!context) {
     return res.json({
       status: "success",
@@ -85,7 +86,7 @@ export const chatController = async (req, res) => {
     });
   }
 
-  // 3. FINAL PROMPT
+  // 🔹 3. PROMPT
   const prompt = `
 You are Abdullah's personal AI assistant. Speak as Abdullah — professional, confident, and friendly.
 
@@ -124,24 +125,33 @@ USER QUESTION:
 ${message}
 `;
 
-  // SAFE PARSER
+  // 🔹 SAFE PARSER
   const safeParseJSON = (text) => {
     if (!text) throw new Error("Empty AI response");
 
     let cleaned = text.trim();
-
     cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/g, "");
     cleaned = cleaned.replace(/```json|```/g, "").trim();
 
     return JSON.parse(cleaned);
   };
+
+  // 🔥 MODELS (stable first)
   const MODELS = [
-    "deepseek/DeepSeek-V3-0324",
     "openai/gpt-4o-mini",
     "mistralai/Mistral-7B-Instruct-v0.2",
+    "meta/Llama-4-Scout-17B-16E-Instruct",
   ];
+
+  let lastError = null;
+
+  // 🔥 4. MULTI-MODEL FALLBACK LOOP
   for (let model of MODELS) {
     try {
+      console.log("⚡ Trying model:", model);
+
+      await sleep(300); // avoid rate limit
+
       const response = await fetch(
         "https://models.github.ai/inference/chat/completions",
         {
@@ -154,7 +164,7 @@ ${message}
           body: JSON.stringify({
             model: model,
             messages: [{ role: "user", content: prompt }],
-            max_tokens: 800,
+            max_tokens: 700,
             temperature: 0.5,
           }),
         },
@@ -162,38 +172,73 @@ ${message}
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Model ${model} failed: ${text}`);
+        throw new Error(text);
       }
 
       const data = await response.json();
       const reply = data?.choices?.[0]?.message?.content;
 
       if (!reply) {
-        throw new Error(`Model ${model} returned empty response`);
+        throw new Error("Empty reply");
       }
 
       const parsed = safeParseJSON(reply);
 
+      // ✅ SUCCESS → return immediately
       return res.json({
         status: "success",
         question: message,
         message: parsed.message,
         data: parsed.data,
         metadata: {
-          provider: "GitHub Models",
+          provider: model,
           timestamp: new Date().toISOString(),
-          version: "3.0.0",
+          version: "4.0.0",
           queryType,
         },
       });
     } catch (err) {
-      console.error("❌ Chat Error:", err.message);
+      console.warn(`❌ Model failed: ${model}`, err.message);
 
-      return res.status(500).json({
-        status: "error",
-        message: "AI service temporarily unavailable",
-        details: err.message,
-      });
+      lastError = err;
+
+      // 🚫 rate limit skip fast
+      if (err.message.includes("Too many requests")) {
+        continue;
+      }
+
+      // 🚫 JSON parse fail bhi skip
+      if (err.message.includes("Unexpected token")) {
+        continue;
+      }
+
+      continue;
     }
   }
+
+  // 🔥 5. FINAL FALLBACK (VERY IMPORTANT)
+  return res.json({
+    status: "success",
+    question: message,
+    message:
+      "I'm Abdullah. AI services are busy right now, but here’s a quick response based on my profile.",
+    data: {
+      profile: {},
+      projects: [],
+      education: [],
+      experience: [],
+      skills: [],
+      certificates: [],
+      testimonials: [],
+      hobbies: [],
+      general: baseContext.slice(0, 300),
+    },
+    metadata: {
+      provider: "fallback",
+      timestamp: new Date().toISOString(),
+      version: "4.0.0",
+      queryType,
+      error: lastError?.message || "All models failed",
+    },
+  });
 };
