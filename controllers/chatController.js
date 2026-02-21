@@ -151,7 +151,7 @@ ${message}
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model,
+          MODELS,
           messages: [{ role: "user", content: prompt }],
           max_tokens: 800,
           temperature: 0.5,
