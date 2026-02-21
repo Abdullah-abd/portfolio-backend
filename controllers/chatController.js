@@ -135,9 +135,13 @@ ${message}
 
     return JSON.parse(cleaned);
   };
-
+  const MODELS = [
+    "deepseek/DeepSeek-V3-0324",
+    "openai/gpt-4o-mini",
+    "mistralai/Mistral-7B-Instruct-v0.2",
+  ];
   try {
-    const ghResponse = await fetch(
+    const response = await fetch(
       "https://models.github.ai/inference/chat/completions",
       {
         method: "POST",
@@ -147,23 +151,25 @@ ${message}
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "deepseek/DeepSeek-V3-0324",
+          model,
           messages: [{ role: "user", content: prompt }],
-          max_tokens: 800, //  reduce to avoid truncation
-          temperature: 0.5, //  more stable JSON
+          max_tokens: 800,
+          temperature: 0.5,
         }),
       },
     );
 
-    if (!ghResponse.ok) {
-      const text = await ghResponse.text();
-      throw new Error(text);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Model ${model} failed: ${text}`);
     }
 
-    const result = await ghResponse.json();
-    const reply = result?.choices?.[0]?.message?.content;
+    const data = await response.json();
+    const reply = data?.choices?.[0]?.message?.content;
 
-    if (!reply) throw new Error("No content from model");
+    if (!reply) {
+      throw new Error(`Model ${model} returned empty response`);
+    }
 
     const parsed = safeParseJSON(reply);
 
